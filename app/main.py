@@ -6,53 +6,78 @@ from processor import Processor
 
 
 # set params
-window_adapt_coef = 1.2
+CULVATURE_THRESHOLD_PX = 10.0
 
 processor = Processor(img_path=cfg.img_path)
 
 
-def put_image_info(image, straight_len):
+def put_image_info(image, straight_length, indent_val, cnt_idx=None, A_pt=None, B_pt=None, straight_section=None):
+    
+    if straight_length != 0.0:
+        cv2.circle(image, tuple(A_pt), 8, (0, 0, 255), -1)
+        cv2.putText(image, "A", (A_pt[0] + 15, A_pt[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        
+        cv2.circle(image, tuple(B_pt), 8, (0, 0, 255), -1)
+        cv2.putText(image, "B", (B_pt[0] + 15, B_pt[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        
+        cv2.putText(image, f"cnt_idx: {cnt_idx}", (B_pt[0] + 15, B_pt[1]-40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        
+        cv2.polylines(image, [straight_section], False, (0, 0, 255), 3)
+
+        cv2.putText(
+            image, 
+            f"cnt_idx: {cnt_idx} - straight length: {straight_length:.2f} px",
+            (15, indent_val), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2
+            )
+    
+    else:
+        cv2.putText(
+            image, 
+            f"straight length: {straight_length:.2f} px",
+            (15, indent_val), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2
+            )
+    
     cv2.putText(
-        image, 
-        f"straight length: {straight_len:.2f} px",
-        (15, 35),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
-        (0, 255, 0),
-        2
-        )
-
-
-def draw_points(image, A_pt, B_pt, straight_section):
-    cv2.circle(image, tuple(A_pt), 8, (0, 0, 255), -1)
-    cv2.putText(image, "A", (A_pt[0] + 15, A_pt[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        image,
+        "press any key to close window",
+        (15, image.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2
+    )
     
-    cv2.circle(image, tuple(B_pt), 8, (0, 0, 255), -1)
-    cv2.putText(image, "B", (B_pt[0] + 15, B_pt[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
     
-    cv2.polylines(image, [straight_section], False, (0, 0, 255), 3)
-
-def show_result_image(img_path, cnt_info_dict):
+def show_result_image(
+    img_path:str, cnt_info_dict:dict, window_adapt_coef:float,
+):
     
     image = cv2.imdecode(
         np.fromfile(img_path, dtype=np.uint8),
         cv2.IMREAD_COLOR
     )
+        
+    indent_val = 35
+        
+    if len(cnt_info_dict) == 0:
+        straight_length = 0.0
+        put_image_info(image, straight_length, indent_val)
     
-    for cnt_idx, cnt_info in cnt_info_dict.items():
-        straight_length = cnt_info["straight_length"]
-        contour = cnt_info["contour"]
-        A_pt = cnt_info["A_pt"]
-        B_pt = cnt_info["B_pt"]
-        straight_section = cnt_info["straight_section"]
-    
-        cv2.drawContours(image, [contour], -1, (0, 255, 0), 3)
-        draw_points(image, A_pt, B_pt, straight_section)
-    
-        put_image_info(image, straight_length)
+    else:
+        for cnt_idx, cnt_info in cnt_info_dict.items():
+            straight_length = cnt_info["straight_length"]
+            contour = cnt_info["contour"]
+            A_pt = cnt_info["A_pt"]
+            B_pt = cnt_info["B_pt"]
+            straight_section = cnt_info["straight_section"]
+        
+            cv2.drawContours(image, [contour], -1, (0, 255, 0), 3)
+            put_image_info(image, straight_length, indent_val, cnt_idx, A_pt, B_pt, straight_section)
+            
+            indent_val += 40
     
     cv2.namedWindow("result", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("result", int(image.shape[1] / window_adapt_coef), int(image.shape[0] / window_adapt_coef))
+    cv2.resizeWindow(
+        "result", 
+        int(image.shape[1] / window_adapt_coef), 
+        int(image.shape[0] / window_adapt_coef),
+    )
 
     cv2.imshow("result", image)
     cv2.waitKey(0)
@@ -62,13 +87,18 @@ def show_result_image(img_path, cnt_info_dict):
 def find_max_straight_edge_length(
     curvature_threshold_px: float
 ) -> dict:
+    '''Finds the longest straight edge in each contour of and its length of each item on the image.'''
 
+    cnt_info_dict = {}
+    
+    if curvature_threshold_px < 0:
+        print("[ERROR] Curvature threshold must be non-negative.")
+        return cnt_info_dict
+    
     contours_lst = processor.get_contours()
     
     if contours_lst is None:
-        return 0.0
-    
-    cnt_info_dict = {}
+        return cnt_info_dict
     
     for cnt_idx, contour in enumerate(contours_lst):
         cnt_info_dict[cnt_idx] = {
@@ -119,7 +149,7 @@ def find_max_straight_edge_length(
                         break
                     
                 if straight_flag:
-                    # straight_section.append(B_pt)
+                    # Update max straight length and points
                     straight_length = AB_len
                     
                     cnt_info_dict[cnt_idx]["straight_length"] = straight_length
@@ -127,15 +157,28 @@ def find_max_straight_edge_length(
                     cnt_info_dict[cnt_idx]["B_pt"] = B_pt
                     cnt_info_dict[cnt_idx]["straight_section"] = Pnts_exp[i:j+1]
         
-        print(f"Contour {cnt_idx}:")
-        print(f"  Straight length: {cnt_info_dict[cnt_idx]['straight_length']:.2f} px")
-        print(len(cnt_info_dict[cnt_idx]["contour"]))
-        print(len(cnt_info_dict[cnt_idx]["straight_section"]))
-
-    return cnt_info_dict            
+    return cnt_info_dict
                     
 
 if __name__ == "__main__":
-    cnt_info_dict = find_max_straight_edge_length(curvature_threshold_px=10.0)
-    show_result_image(cfg.img_path, cnt_info_dict)
+    cnt_info_dict = find_max_straight_edge_length(
+        curvature_threshold_px=CULVATURE_THRESHOLD_PX,
+    )
+    
+    if len(cnt_info_dict) > 0:
+        print("[INFO] Straight edge lengths for detected contours:")
+        for cnt_idx, cnt_info in cnt_info_dict.items():
+            straight_length = cnt_info["straight_length"]
+            print(f"    Contour {cnt_idx} - Straight edge length: {straight_length:.2f} px")
+    
+    else:
+        straight_length = 0.0
+        print("[INFO] No contours found or no straight edges detected.")
+        print(f"Straight edge length: {straight_length} px")
+    
+    show_result_image(
+        img_path=cfg.img_path, 
+        cnt_info_dict=cnt_info_dict,
+        window_adapt_coef=cfg.window_adapt_coef,
+    )
     
